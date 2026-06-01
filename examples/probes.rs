@@ -26,11 +26,11 @@
 
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use axum_health::database::SqlxCheck;
 use axum_health::{BreakerConfig, CheckConfig, HealthBuilder, HealthEvent, HealthHandle, Probe};
 use sqlx::PgPool;

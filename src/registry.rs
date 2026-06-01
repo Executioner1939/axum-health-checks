@@ -13,7 +13,7 @@ use crate::startup::StartupController;
 use crate::status::HealthStatus;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, watch, Mutex};
+use tokio::sync::{Mutex, broadcast, watch};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -336,7 +336,7 @@ impl HealthHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::{check_fn, CheckResult};
+    use crate::check::{CheckResult, check_fn};
     use crate::events::HealthEvent;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
@@ -528,7 +528,7 @@ mod tests {
             .build(cancel.clone());
 
         let handle = registry.handle();
-        let server = TestServer::new(registry.router()).unwrap();
+        let server = TestServer::new(registry.router());
         startup.mark_ready();
 
         // Become ready first.

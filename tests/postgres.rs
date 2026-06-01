@@ -7,18 +7,17 @@
 
 #[cfg(feature = "local")]
 mod local {
-    use axum::http::StatusCode;
     use axum::Router;
+    use axum::http::StatusCode;
     use axum_health::database::{DieselR2d2Check, SeaOrmCheck, SqlxCheck};
     use axum_health::{Check, CheckConfig, HealthBuilder, Probe};
     use axum_test::TestServer;
     use diesel::r2d2::ConnectionManager;
-    use diesel_async::pooled_connection::AsyncDieselConnectionManager;
     use diesel_async::AsyncPgConnection;
-    use sea_orm::DatabaseConnection;
+    use diesel_async::pooled_connection::AsyncDieselConnectionManager;
     use std::time::Duration;
-    use testcontainers::runners::AsyncRunner;
     use testcontainers::ContainerAsync;
+    use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::postgres::Postgres;
     use tokio_util::sync::CancellationToken;
 
@@ -31,7 +30,7 @@ mod local {
         }
     }
 
-    fn diesel(url: &str) -> impl Check {
+    fn diesel(url: &str) -> impl Check + use<> {
         let manager = ConnectionManager::<diesel::PgConnection>::new(url.to_owned());
         let pool = diesel::r2d2::Pool::builder()
             .max_size(1)
@@ -41,7 +40,7 @@ mod local {
         DieselR2d2Check::new("diesel-postgres", pool)
     }
 
-    async fn async_diesel_bb8(url: &str) -> impl Check {
+    async fn async_diesel_bb8(url: &str) -> impl Check + use<> {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::bb8::Pool::builder()
             .max_size(1)
@@ -52,7 +51,7 @@ mod local {
         axum_health::database::bb8::DieselCheck::new("diesel-bb8", pool)
     }
 
-    fn async_diesel_deadpool(url: &str) -> impl Check {
+    fn async_diesel_deadpool(url: &str) -> impl Check + use<> {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::deadpool::Pool::builder(manager)
             .max_size(1)
@@ -61,7 +60,7 @@ mod local {
         axum_health::database::deadpool::DieselCheck::new("diesel-deadpool", pool)
     }
 
-    fn async_diesel_mobc(url: &str) -> impl Check {
+    fn async_diesel_mobc(url: &str) -> impl Check + use<> {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::mobc::Pool::builder()
             .max_open(1)
@@ -69,7 +68,7 @@ mod local {
         axum_health::database::mobc::DieselCheck::new("diesel-mobc", pool)
     }
 
-    async fn sqlx(url: &str) -> impl Check {
+    async fn sqlx(url: &str) -> impl Check + use<> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
@@ -79,14 +78,11 @@ mod local {
         SqlxCheck::new("sqlx", pool)
     }
 
-    async fn sea_orm(url: &str) -> impl Check {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(Duration::from_secs(5))
-            .connect(url)
-            .await
-            .unwrap();
-        SeaOrmCheck::new("sea-orm", DatabaseConnection::from(pool))
+    async fn sea_orm(url: &str) -> impl Check + use<> {
+        // sea-orm bundles its own sqlx major; build its connection through
+        // sea-orm's own pool rather than sharing our direct sqlx 0.9 pool.
+        let database = sea_orm::Database::connect(url).await.unwrap();
+        SeaOrmCheck::new("sea-orm", database)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -105,7 +101,7 @@ mod local {
             .register_with(Probe::READINESS, fast(), sea_orm(url).await)
             .build(cancel.clone());
 
-        let server = TestServer::new(Router::new().merge(registry.router())).unwrap();
+        let server = TestServer::new(Router::new().merge(registry.router()));
         startup.mark_ready();
 
         assert!(

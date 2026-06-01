@@ -1,8 +1,8 @@
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use axum_health::database::DieselR2d2Check;
 use axum_health::{HealthBuilder, Probe};
 use diesel::r2d2::{ConnectionManager, Pool};

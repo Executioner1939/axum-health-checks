@@ -10,8 +10,8 @@
     allow(unused_imports)
 )]
 
-use axum::http::StatusCode;
 use axum::Router;
+use axum::http::StatusCode;
 use axum_health::{CheckConfig, HealthBuilder, Probe};
 use axum_test::TestServer;
 use std::fs::OpenOptions;
@@ -75,13 +75,14 @@ async fn test_sqlx() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sea_orm() {
     use axum_health::database::SeaOrmCheck;
-    use sea_orm::DatabaseConnection;
+    use sea_orm::{Database, DatabaseConnection};
 
     let dir = tempfile::tempdir().unwrap();
-    let url = db_file(dir.path());
+    let path = db_file(dir.path());
 
-    let pool = sqlx::sqlite::SqlitePool::connect(&url).await.unwrap();
-    let database = DatabaseConnection::from(pool);
+    // sea-orm bundles its own sqlx major, so build the connection through
+    // sea-orm's own pool from a URL instead of sharing our direct sqlx 0.9 pool.
+    let database: DatabaseConnection = Database::connect(format!("sqlite://{path}")).await.unwrap();
     let check = SeaOrmCheck::new("sea-orm-sqlite", database);
 
     run_test(check).await;
@@ -104,7 +105,7 @@ async fn run_test(check: impl axum_health::Check) {
         .build(cancel.clone());
 
     let router = Router::new().merge(registry.router());
-    let server = TestServer::new(router).unwrap();
+    let server = TestServer::new(router);
 
     // Before the startup gate is opened, readiness must be 503.
     let response = server.get("/health/ready").await;

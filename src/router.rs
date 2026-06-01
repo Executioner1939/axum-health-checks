@@ -8,11 +8,11 @@
 use crate::config::Probe;
 use crate::registry::HealthHandle;
 use crate::snapshot::HealthSnapshot;
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
-use axum::Router;
 
 /// Build the health router over a [`HealthHandle`].
 ///

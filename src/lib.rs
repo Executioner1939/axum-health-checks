@@ -47,7 +47,7 @@ pub mod startup;
 pub mod status;
 
 pub use crate::breaker::BreakerState;
-pub use crate::check::{check_fn, Check, CheckContext, CheckError, CheckResult};
+pub use crate::check::{Check, CheckContext, CheckError, CheckResult, check_fn};
 pub use crate::config::{BreakerConfig, CheckConfig, Probe};
 pub use crate::events::{EventStream, HealthEvent};
 pub use crate::registry::{HealthBuilder, HealthHandle, HealthRegistry};

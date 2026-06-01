@@ -16,19 +16,34 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      # Edition 2024 needs rustc >= 1.85; pin the declared MSRV so CI fails loudly
+      # on an accidental edition-2024-only or newer-than-MSRV construct.
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # The diesel/sqlx mysql dev-dependencies link libmysqlclient.
       - name: Install libmysqlclient
         run: sudo apt-get update && sudo apt-get install -y libmysqlclient-dev
+      - name: Format
+        run: cargo fmt --check
       # Lib must compile across the full database feature graph (no backend
       # selected; backends are pulled by examples/tests, not the library).
       - name: Build
         run: cargo build --features=diesel-r2d2,diesel-bb8,diesel-deadpool,diesel-mobc,sea-orm,sqlx
+      # Lint the test/example targets too, matching the local green gate.
+      - name: Clippy
+        run: >-
+          cargo clippy --all-targets
+          --features=sqlx,sqlx/sqlite,sea-orm,sea-orm/sqlx-sqlite,diesel-r2d2,diesel/sqlite
+          -- -D warnings
       # Run the library unit tests plus the un-gated sqlite integration tests.
       # The testcontainers postgres/mysql tests are gated behind `local` and
-      # skipped here because they need a live database.
+      # skipped here because they need a live database. sea-orm now drives its own
+      # bundled sqlx pool, so its runtime feature must be enabled explicitly rather
+      # than inherited transitively from the shared sqlx pool that used to back it.
       - name: Test
         run: >-
           cargo nextest run
-          --features=diesel-r2d2,diesel-bb8,diesel-deadpool,diesel-mobc,sea-orm,sqlx,diesel/sqlite,sqlx/sqlite,sea-orm/sqlx-sqlite
+          --features=diesel-r2d2,diesel-bb8,diesel-deadpool,diesel-mobc,sea-orm,sqlx,diesel/sqlite,sqlx/sqlite,sea-orm/sqlx-sqlite,sea-orm/runtime-tokio-rustls

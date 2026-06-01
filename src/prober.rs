@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, watch};
-use tokio::time::{interval_at, Instant, MissedTickBehavior};
+use tokio::time::{Instant, MissedTickBehavior, interval_at};
 use tokio_util::sync::CancellationToken;
 
 /// Everything a single prober task needs to run. Built by the registry.
