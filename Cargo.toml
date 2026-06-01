@@ -1,17 +1,16 @@
 [package]
 name = "axum-health"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 authors = ["Alan Baumgartner"]
 license = "MIT OR Apache-2.0"
-keywords = ["axum", "diesel", "sqlx", "sea-orm"]
+keywords = ["axum", "kubernetes", "healthcheck", "liveness", "readiness"]
+categories = ["web-programming", "asynchronous"]
 readme = "README.md"
-repository = "https://github.com/alanbaumgartner/axum-health"
-homepage = "https://github.com/alanbaumgartner/axum-health"
+repository = "https://github.com/Executioner1939/axum-health-checks"
+homepage = "https://github.com/Executioner1939/axum-health-checks"
 documentation = "https://docs.rs/axum-health"
-description = """
-Spring Boot like health indicators.
-"""
+description = "Kubernetes liveness, readiness, and startup probes for axum: background dependency checks, per-check circuit breakers, warm-up gating, and fail-ready-first drain on tokio."
 exclude = ["/tests", "/.github"]
 
 [dependencies]
