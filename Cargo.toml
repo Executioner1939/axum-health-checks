@@ -17,9 +17,11 @@ exclude = ["/tests", "/.github"]
 [dependencies]
 async-trait = { version = "0.1.86" }
 axum = { version = "0.8.1" }
-serde = { version = "1.0.217", features = ["derive"] }
-tower-layer = { version = "0.3.3" }
-futures = { version = "0.3.31" }
+serde = { version = "1.0.217", features = ["derive", "rc"] }
+bitflags = { version = "2" }
+tokio = { version = "1.43", default-features = false, features = ["sync", "time", "rt", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = { version = "0.1", optional = true }
 
 diesel = { version = "2.2.7", default-features = false, optional = true }
 diesel-async = { version = "0.5.2", default-features = false, optional = true }
@@ -28,6 +30,10 @@ sqlx = { version = "0.8.3", default-features = false, optional = true }
 
 [features]
 default = []
+
+# Optional tokio-stream interop (WatchStream/BroadcastStream); off by default so the
+# core stays futures-free and tokio-only.
+stream = ["dep:tokio-stream"]
 
 diesel-deadpool = ["_diesel-async", "diesel-async/deadpool"]
 diesel-mobc = ["_diesel-async", "diesel-async/mobc"]
@@ -40,20 +46,25 @@ _diesel = ["dep:diesel", "diesel/i-implement-a-third-party-backend-and-opt-into-
 sea-orm = ["dep:sea-orm"]
 sqlx = ["dep:sqlx"]
 
+# Gates the testcontainers-backed postgres/mysql integration tests, which need a
+# live database and are skipped in CI. Enable locally with all DB drivers on.
+local = []
+
 [dev-dependencies]
 diesel-async = { version = "0.5.2", features = ["mysql", "sqlite", "postgres", "deadpool", "mobc", "bb8"] }
 diesel = { version = "2.2.7", features = ["r2d2", "mysql", "sqlite", "postgres"] }
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "mysql", "sqlite", "postgres"] }
 sea-orm = { version = "1.1.5", features = ["sqlx-postgres", "sqlx-mysql", "sqlx-sqlite"] }
 axum-test = "17.2.0"
-tokio = { version = "1.43.0", features = ["test-util"] }
+serde_json = "1.0.138"
+tokio = { version = "1.43.0", features = ["test-util", "rt-multi-thread", "net", "signal"] }
 testcontainers = { version = "0.23.2" }
 testcontainers-modules = { version = "0.11.6", features = ["postgres", "mysql"] }
 tempfile = "3.17.1"
 
 [[example]]
 name = "diesel"
-required-features = ["diesel", "diesel/sqlite"]
+required-features = ["diesel-r2d2", "diesel/sqlite"]
 
 [[example]]
 name = "sea_orm"
@@ -62,3 +73,7 @@ required-features = ["sea-orm", "sea-orm/sqlx-sqlite"]
 [[example]]
 name = "sqlx"
 required-features = ["sqlx", "sqlx/sqlite"]
+
+[[example]]
+name = "probes"
+required-features = ["sqlx", "sqlx/postgres", "sqlx/runtime-tokio"]

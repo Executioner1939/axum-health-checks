@@ -3,30 +3,38 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use axum_health::database::DatabaseHealthIndicator;
-use axum_health::Health;
+use axum_health::database::SeaOrmCheck;
+use axum_health::{HealthBuilder, Probe};
 use sea_orm::DatabaseConnection;
 use sqlx::SqlitePool;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
     let pool = SqlitePool::connect("test.db").await.unwrap();
     let database_connection = DatabaseConnection::from(pool);
 
-    // Clone the pool!
-    let indicator = DatabaseHealthIndicator::new("sea-orm".to_owned(), database_connection.clone());
+    let cancel = CancellationToken::new();
+
+    let (registry, startup) = HealthBuilder::new()
+        .register(
+            Probe::READINESS,
+            SeaOrmCheck::new("sea-orm", database_connection.clone()),
+        )
+        .build(cancel.clone());
 
     let router = Router::new()
-        .route("/health", get(axum_health::health))
         .route("/things", get(things))
-        // Create a Health layer and add the indicator
-        .layer(Health::builder().with_indicator(indicator).build())
-        .with_state(database_connection);
+        .with_state(database_connection)
+        .merge(registry.router());
+
+    startup.mark_ready();
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
     axum::serve(listener, router.into_make_service())
+        .with_graceful_shutdown(async move { registry.drain().await })
         .await
         .unwrap()
 }

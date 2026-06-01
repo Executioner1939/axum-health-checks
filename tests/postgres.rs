@@ -1,33 +1,47 @@
+//! Postgres integration tests against the redesigned background-prober API.
+//!
+//! Gated behind the `local` feature (a live database via testcontainers), so it
+//! is skipped in CI. Registers every supported driver as a readiness check on a
+//! fast interval, waits for the first probe, asserts all healthy, then stops the
+//! container and waits for the breakers to drive readiness Down.
+
 #[cfg(feature = "local")]
 mod local {
     use axum::http::StatusCode;
-    use axum::routing::get;
     use axum::Router;
-    use axum_health::database::DatabaseHealthIndicator;
-    use axum_health::service::HealthIndicator;
-    use axum_health::{Health, HealthDetail, HealthDetails, HealthStatus};
+    use axum_health::database::{DieselR2d2Check, SeaOrmCheck, SqlxCheck};
+    use axum_health::{Check, CheckConfig, HealthBuilder, Probe};
     use axum_test::TestServer;
     use diesel::r2d2::ConnectionManager;
     use diesel_async::pooled_connection::AsyncDieselConnectionManager;
     use diesel_async::AsyncPgConnection;
     use sea_orm::DatabaseConnection;
-    use std::collections::BTreeMap;
     use std::time::Duration;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::ContainerAsync;
     use testcontainers_modules::postgres::Postgres;
+    use tokio_util::sync::CancellationToken;
 
-    async fn diesel(url: &str) -> impl HealthIndicator {
+    fn fast() -> CheckConfig {
+        CheckConfig {
+            interval: Duration::from_millis(50),
+            timeout: Duration::from_secs(5),
+            initial_delay: Duration::ZERO,
+            ..CheckConfig::default()
+        }
+    }
+
+    fn diesel(url: &str) -> impl Check {
         let manager = ConnectionManager::<diesel::PgConnection>::new(url.to_owned());
         let pool = diesel::r2d2::Pool::builder()
             .max_size(1)
             .connection_timeout(Duration::from_secs(5))
             .build(manager)
             .unwrap();
-        DatabaseHealthIndicator::new("diesel-postgres".to_owned(), pool)
+        DieselR2d2Check::new("diesel-postgres", pool)
     }
 
-    async fn async_diesel_bb8(url: &str) -> impl HealthIndicator {
+    async fn async_diesel_bb8(url: &str) -> impl Check {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::bb8::Pool::builder()
             .max_size(1)
@@ -35,105 +49,87 @@ mod local {
             .build(manager)
             .await
             .unwrap();
-        DatabaseHealthIndicator::new("diesel-bb8".to_owned(), pool)
+        axum_health::database::bb8::DieselCheck::new("diesel-bb8", pool)
     }
 
-    async fn async_diesel_deadpool(url: &str) -> impl HealthIndicator {
+    fn async_diesel_deadpool(url: &str) -> impl Check {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::deadpool::Pool::builder(manager)
             .max_size(1)
             .build()
             .unwrap();
-        DatabaseHealthIndicator::new("diesel-deadpool".to_owned(), pool)
+        axum_health::database::deadpool::DieselCheck::new("diesel-deadpool", pool)
     }
 
-    async fn async_diesel_mobc(url: &str) -> impl HealthIndicator {
+    fn async_diesel_mobc(url: &str) -> impl Check {
         let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url.to_owned());
         let pool = diesel_async::pooled_connection::mobc::Pool::builder()
             .max_open(1)
             .build(manager);
-        DatabaseHealthIndicator::new("diesel-mobc".to_owned(), pool)
+        axum_health::database::mobc::DieselCheck::new("diesel-mobc", pool)
     }
 
-    async fn sqlx(url: &str) -> impl HealthIndicator {
+    async fn sqlx(url: &str) -> impl Check {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
-            .connect(&url)
+            .connect(url)
             .await
             .unwrap();
-        DatabaseHealthIndicator::new("sqlx".to_owned(), pool)
+        SqlxCheck::new("sqlx", pool)
     }
 
-    async fn sea_orm(url: &str) -> impl HealthIndicator {
+    async fn sea_orm(url: &str) -> impl Check {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
-            .connect(&url)
+            .connect(url)
             .await
             .unwrap();
-        let pool = DatabaseConnection::from(pool);
-        DatabaseHealthIndicator::new("sea-orm".to_owned(), pool)
+        SeaOrmCheck::new("sea-orm", DatabaseConnection::from(pool))
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_all() {
         let container = Postgres::default().start().await.unwrap();
-        container.start().await.unwrap();
-
         let url = get_url(&container).await;
         let url = url.as_str();
 
-        let health = Health::builder()
-            .with_indicator(diesel(url).await)
-            .with_indicator(async_diesel_bb8(url).await)
-            .with_indicator(async_diesel_deadpool(url).await)
-            .with_indicator(async_diesel_mobc(url).await)
-            .with_indicator(sqlx(url).await)
-            .with_indicator(sea_orm(url).await)
-            .build();
+        let cancel = CancellationToken::new();
+        let (registry, startup) = HealthBuilder::new()
+            .register_with(Probe::READINESS, fast(), diesel(url))
+            .register_with(Probe::READINESS, fast(), async_diesel_bb8(url).await)
+            .register_with(Probe::READINESS, fast(), async_diesel_deadpool(url))
+            .register_with(Probe::READINESS, fast(), async_diesel_mobc(url))
+            .register_with(Probe::READINESS, fast(), sqlx(url).await)
+            .register_with(Probe::READINESS, fast(), sea_orm(url).await)
+            .build(cancel.clone());
 
-        let router = Router::new()
-            .route("/health", get(axum_health::health))
-            .layer(health);
+        let server = TestServer::new(Router::new().merge(registry.router())).unwrap();
+        startup.mark_ready();
 
-        let server = TestServer::new(router).unwrap();
+        assert!(
+            await_status(&server, "/health/ready", StatusCode::OK).await,
+            "readiness never became OK with a live database"
+        );
 
-        let response = server.get("/health").await;
-        assert_eq!(response.status_code(), StatusCode::OK);
-        let body = response.json::<HealthDetails>();
-
-        let expected = HealthDetails {
-            status: HealthStatus::Up,
-            components: BTreeMap::from_iter([
-                ("diesel-postgres".to_owned(), HealthDetail::up()),
-                ("diesel-bb8".to_owned(), HealthDetail::up()),
-                ("diesel-deadpool".to_owned(), HealthDetail::up()),
-                ("diesel-mobc".to_owned(), HealthDetail::up()),
-                ("sqlx".to_owned(), HealthDetail::up()),
-                ("sea-orm".to_owned(), HealthDetail::up()),
-            ]),
-        };
-        assert_eq!(body, expected);
-
+        // Stop the database; every breaker should trip and readiness fall to 503.
         container.stop().await.unwrap();
+        assert!(
+            await_status(&server, "/health/ready", StatusCode::SERVICE_UNAVAILABLE).await,
+            "readiness never became 503 after the database stopped"
+        );
+    }
 
-        let response = server.get("/health").await;
-        assert_eq!(response.status_code(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = response.json::<HealthDetails>();
-
-        let expected = HealthDetails {
-            status: HealthStatus::Down,
-            components: BTreeMap::from_iter([
-                ("diesel-postgres".to_owned(), HealthDetail::down()),
-                ("diesel-bb8".to_owned(), HealthDetail::down()),
-                ("diesel-deadpool".to_owned(), HealthDetail::down()),
-                ("diesel-mobc".to_owned(), HealthDetail::down()),
-                ("sqlx".to_owned(), HealthDetail::down()),
-                ("sea-orm".to_owned(), HealthDetail::down()),
-            ]),
-        };
-        assert_eq!(body, expected);
+    async fn await_status(server: &TestServer, path: &str, want: StatusCode) -> bool {
+        // Allow time for the breakers to reach the failure threshold.
+        for _ in 0..600 {
+            if server.get(path).await.status_code() == want {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
     }
 
     async fn get_url(container: &ContainerAsync<Postgres>) -> String {

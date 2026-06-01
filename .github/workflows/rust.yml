@@ -18,7 +18,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # The diesel/sqlx mysql dev-dependencies link libmysqlclient.
+      - name: Install libmysqlclient
+        run: sudo apt-get update && sudo apt-get install -y libmysqlclient-dev
+      # Lib must compile across the full database feature graph (no backend
+      # selected; backends are pulled by examples/tests, not the library).
       - name: Build
-        run: cargo build
+        run: cargo build --features=diesel-r2d2,diesel-bb8,diesel-deadpool,diesel-mobc,sea-orm,sqlx
+      # Run the library unit tests plus the un-gated sqlite integration tests.
+      # The testcontainers postgres/mysql tests are gated behind `local` and
+      # skipped here because they need a live database.
       - name: Test
-        run: cargo nextest run --features=diesel-async-mysql,diesel-mobc,diesel-deadpool,diesel-bb8,sea-orm,sqlx,diesel-async-postgres
+        run: >-
+          cargo nextest run
+          --features=diesel-r2d2,diesel-bb8,diesel-deadpool,diesel-mobc,sea-orm,sqlx,diesel/sqlite,sqlx/sqlite,sea-orm/sqlx-sqlite

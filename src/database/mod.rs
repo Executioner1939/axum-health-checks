@@ -1,5 +1,11 @@
-use crate::{HealthDetail, HealthIndicator};
-use async_trait::async_trait;
+//! Native [`Check`](crate::check::Check) implementations for common database
+//! drivers, behind feature gates.
+//!
+//! The old `Pingable` trait and `DatabaseHealthIndicator` adapter are gone.
+//! Each driver gets a concrete `Check` whose body reuses the proven
+//! `acquire()`/`ping()` round-trip but returns a rich `CheckResult` (latency,
+//! preserved error) instead of a `bool`. The per-attempt timeout is imposed by
+//! the prober, not the check.
 
 #[cfg(feature = "_diesel")]
 pub mod diesel;
@@ -8,46 +14,21 @@ pub mod sea_orm;
 #[cfg(feature = "sqlx")]
 pub mod sqlx;
 
-/// [DatabaseHealthIndicator] can be used with anything that implements this trait.
-/// [diesel], [sea-orm], and [sqlx] all implement some form of a `ping` operation on their connection
-/// or connection pools, but this can be implemented for other database drivers using a manual query,
-/// generally a `SELECT 1` query or variant.
-#[async_trait]
-pub trait Pingable {
-    async fn ping(&self) -> bool;
-}
+#[cfg(feature = "sqlx")]
+pub use sqlx::SqlxCheck;
 
-pub struct DatabaseHealthIndicator<Pool>
-where
-    Pool: Pingable,
-{
-    name: String,
-    pool: Pool,
-}
+#[cfg(feature = "sea-orm")]
+pub use sea_orm::SeaOrmCheck;
 
-impl<Pool> DatabaseHealthIndicator<Pool>
-where
-    Pool: Pingable,
-{
-    pub fn new(name: String, pool: Pool) -> Self {
-        DatabaseHealthIndicator { name, pool }
-    }
-}
+#[cfg(feature = "diesel-r2d2")]
+pub use diesel::DieselR2d2Check;
 
-#[async_trait]
-impl<Pool> HealthIndicator for DatabaseHealthIndicator<Pool>
-where
-    Pool: Pingable + Send + Sync + 'static,
-{
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    async fn details(&self) -> HealthDetail {
-        if self.pool.ping().await {
-            HealthDetail::up()
-        } else {
-            HealthDetail::down()
-        }
-    }
-}
+// Re-export the per-async-pool diesel check modules at the database level so
+// consumers write `database::bb8::DieselCheck` rather than reaching through the
+// `diesel` submodule.
+#[cfg(feature = "diesel-bb8")]
+pub use diesel::bb8;
+#[cfg(feature = "diesel-deadpool")]
+pub use diesel::deadpool;
+#[cfg(feature = "diesel-mobc")]
+pub use diesel::mobc;
